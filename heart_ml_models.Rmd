@@ -1,0 +1,117 @@
+---
+title: "heart_machine_learning_models"
+author: "Dave Riley"
+date: "11/24/2018"
+output: html_document
+---
+
+
+## First machine learning model
+I have some more work to do here preprocessing the data and putting in dummy variables.  Luckily, i think it is only for one or two variables.  It looks like "thal" is the only categorical that will need dummies.
+
+I may also have to convert the other factors or compress them from 0 to 1.  I am not sure and I will have to research this more.  Check the feature engineering book. I am not sure if factors in numerical form need to be spread out in dummy variable.  I think i will try to use caret to sun some automatic preprocessing.
+
+From a comment:  
+"More importantly, however, is that you’re probably not submitting the right values. This question asks for a probability in decimal format from 0 - 1. So, your predictions should look like 0.5, 0.2, 0.7 not just 0s and 1s. If you are submitting just 0s and 1s, you are predicting an outcome with 0% probability or 100% probability. The metric for this competition, Log Loss, puts a very high penalty on being confident and wrong, so your score will be quite bad.
+
+Hope that helps, and good luck in the competition!
+
+TLDR: If your submission is all 0s and 1s your score will be worse than no prediction (i.e., 0.5 for every value)."
+
+I figured out how to submit probablilites(between 0 and 1) using  
+
+'preds <- predict(caret.cv, test_dt, type="prob")'  
+ 
+ 
+From some reason, my first prediction only created one column of data, but the second time running the ML model, it created variables for both 0 and 1.  I sumbmitted the 1's to the website and scored much better. 
+The score was well below the baseline.  I will try to recreate the baseline with all of the varibales in R since it was done in python.  The link to the website is: <http://drivendata.co/blog/machine-learning-with-a-heart-benchmark/>
+
+I need to figure out how to run a log-loss tests on this model.  That way I can iterate tests before submitting to DrivenData.org
+
+
+```{r}
+library(data.table)
+
+train_labels <- read.csv('train_labels.csv')
+train_values <- read.csv('train_values.csv')
+merged_train <- merge(train_labels, train_values, by = "patient_id")
+DT <- as.data.table(merged_train)
+train_dt <- DT[,2:15]
+
+train_dt$heart_disease_present <- as.factor(train_dt$heart_disease_present)
+train_dt$chest_pain_type <- as.factor(train_dt$chest_pain_type)
+train_dt$slope_of_peak_exercise_st_segment <- as.factor(train_dt$slope_of_peak_exercise_st_segment)
+train_dt$num_major_vessels <- as.factor((train_dt$num_major_vessels))
+train_dt$fasting_blood_sugar_gt_120_mg_per_dl <- as.factor(train_dt$fasting_blood_sugar_gt_120_mg_per_dl)
+train_dt$resting_ekg_results <- as.factor(train_dt$resting_ekg_results)
+train_dt$sex <- as.factor(train_dt$sex)
+train_dt$exercise_induced_angina <- as.factor(train_dt$exercise_induced_angina)
+train_dt$thal <- as.factor(train_dt$thal)
+
+sapply(train_dt, class)
+
+library("caret")
+
+train.control <- trainControl(method = "repeatedcv", number = 10, repeats = 3, search = "grid")
+
+tune.grid <- expand.grid(eta = c(0.05, 0.075, 0.1),
+                         nrounds = c(50, 75, 100),
+                         max_depth = 6:8,
+                         min_child_weight = c(2.0, 2.25, 2.5),
+                         colsample_bytree = c(0.3, 0.4, 0.5),
+                         gamma = 0,
+                         subsample = 1
+                         )
+head(tune.grid)
+
+dummy <- dummyVars(~., data = train_dt[, -1])
+dummy_train <- as.data.table(predict(dummy, train_dt[, -1]))
+
+train_dt2 <- cbind(train_dt, dummy_train[,5:6])
+train_dt3 <- train_dt2[,-3]
+
+library(doSNOW)
+cl <- makeCluster(4, type = "SOCK")
+registerDoSNOW(cl)
+
+caret.cv <- train(heart_disease_present ~ ., 
+                  data = train_dt3, 
+                  method = "xgbTree", 
+                  tuneGrid = tune.grid, 
+                  trControl = train.control, 
+                  #metric = "logloss"
+                  )
+
+stopCluster(cl)
+
+test_dt <- as.data.table(read.csv("test_values.csv"))
+test_dt$chest_pain_type <- as.factor(test_dt$chest_pain_type)
+test_dt$slope_of_peak_exercise_st_segment <- as.factor(test_dt$slope_of_peak_exercise_st_segment)
+test_dt$num_major_vessels <- as.factor((test_dt$num_major_vessels))
+test_dt$fasting_blood_sugar_gt_120_mg_per_dl <- as.factor(test_dt$fasting_blood_sugar_gt_120_mg_per_dl)
+test_dt$resting_ekg_results <- as.factor(test_dt$resting_ekg_results)
+test_dt$sex <- as.factor(test_dt$sex)
+test_dt$exercise_induced_angina <- as.factor(test_dt$exercise_induced_angina)
+test_dt$thal <- as.factor(test_dt$thal)
+
+dummy2 <- dummyVars(~., data = test_dt[, -1])
+dummy_test <- predict(dummy2, test_dt[, -1])
+
+test_dt[,"thal.normal"] <- NA
+test_dt$thal.normal <- as.vector(dummy_test[,"thal.normal"])
+
+test_dt[,"thal.reversible_defect"] <- NA
+test_dt$thal.reversible_defect <- as.vector(dummy_test[,"thal.reversible_defect"])
+
+
+preds <- predict(caret.cv, test_dt, type="prob")
+test_dt[,"heart_disease_present"] <- preds[,2]
+test_dt_trimmed <- test_dt[, c("patient_id", "heart_disease_present")]
+
+write.csv(format(test_dt_trimmed, nsmall=2), "heart_disease_submission_2.csv", quote = FALSE, row.names = FALSE)
+```
+This worked much better.  Using predict with type="prob" gave probabilities for both case 0 and 1 (without and with heart disease).  For some reason, my predict output yesterday was either a 0/1 or one column of data.  Either way, my logloss score went down significantly form 1.89 to 0.62.  Not as low as the baseline of .55, but much, much closer.  
+
+There are one of two ways to go from here.  Either dig more into the books on machine learning with R and feature selection, or use the caret documentation <https://cran.r-project.org/web/packages/caret/caret.pdf>  
+
+In the meantime, I also have to go through the baseline documentation for this exercise.  There are multiple areas to explore further and I will have to figure out how to use logloss for cross validation.  It looks like XGBoost has the ability to do that.  Also, there is some more work to do understanding how to tune, how to choose models and how to test them.  This first model took about 25 minutes to run, so I will have to figure out a way to test quicker.

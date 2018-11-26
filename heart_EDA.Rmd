@@ -1,0 +1,104 @@
+---
+title: "Heart Disease EDA"
+author: "Dave Riley"
+date: "11/11/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Predicting Heart Disease competition on DrivenData.org
+
+
+This is an R Markdown document that will be my inital attempt at a few things in R including:  
+* Setting up an environment in R Studio  
+* Working in R markdown with proper documentation  
+* Extract, transform, and load data  
+* Working with data.table, NOT data.frame  
+* EDA  
+* Some maching learning  
+* Exporting the format correctly for the competition  
+
+The link below is to the competition:
+<https://www.drivendata.org/competitions/54/machine-learning-with-a-heart/page/107/>.
+
+
+## Importing and transforming the data
+
+First importing data as data.frames, converting to data.tables and then merge on patient_id to have a single table.
+
+I spent a few hours chasing my tail due to my confusion between tables and frames.  Frames are default, but tables may be faster.  I have a cheatsheet for data.tables.
+
+Taking a few minutes to view the summary statistics for anything that pops out.  So far, it looks like gender is worth digging into.
+
+```{r}
+library(data.table)
+train_labels <- read.csv('train_labels.csv')
+train_values <- read.csv('train_values.csv')
+merged_train <- merge(train_labels, train_values, by = "patient_id")
+DT <- as.data.table(merged_train)
+summary(DT)
+
+sapply(DT, class)
+```
+
+
+# Gender comparison plot
+
+Using ggplot2 we can build a baseline predictive model based on gender alone. It appears that of people with heart disease (n=80), almost 70 are men.  
+
+```{r pressure, echo=FALSE}
+# add labels to this graph
+library(ggplot2)
+gender_plot <- ggplot(DT, aes(sex, heart_disease_present)) + geom_bar(stat = 'identity')
+plot(gender_plot)
+# add labels to the graph left side female, right side male
+gender_plots <- ggplot(DT, aes(heart_disease_present)) + geom_bar() + facet_grid(~ sex)
+plot(gender_plots)
+```
+
+## Several plots versus age.  Heart disease present showed a few interesting areas to explore.
+
+```{r echo=FALSE}
+cholesterol_plot <- ggplot(DT, aes(x = age, y = serum_cholesterol_mg_per_dl, color = heart_disease_present)) + geom_point()
+cholesterol_plot
+
+resting_bp_plots <- ggplot(DT, aes(x = age, y = resting_blood_pressure, color = heart_disease_present)) + geom_point()
+resting_bp_plots
+
+max_hr_plot <- ggplot(DT, aes(x = age, y = max_heart_rate_achieved, color = heart_disease_present)) + geom_point() + geom_smooth()
+max_hr_plot
+
+angina_plot <- ggplot(DT, aes(x = exercise_induced_angina)) + geom_bar(aes(age), color = "Blue") + facet_wrap(~heart_disease_present)
+angina_plot
+```
+
+## Need to look up corrpolt for the plot of the correlation matrix that was made.
+
+```{r, echo = TRUE}
+
+library("corrplot")
+cor_variables <- merge(c(DT[,2:3]), c(DT[,5:15]))
+cor_matrix <- round(cor(cor_variables), 3)
+corrplot(cor_matrix, type = "upper")
+
+```
+# Histograms of various categorical data - tried to find a way to feed a vector and/or use lapply, but was unable to do so.  saved a variable called "categorical_variables"
+
+* I also need to label these better and possible try to find a way to loop these.
+
+```{r, echo= FALSE}
+hist(DT$exercise_induced_angina)
+hist(DT$resting_ekg_results)
+hist(DT$num_major_vessels)
+hist(DT$chest_pain_type)
+hist(DT$slope_of_peak_exercise_st_segment)
+hist(DT$resting_blood_pressure)
+hist(DT$fasting_blood_sugar_gt_120_mg_per_dl)
+hist(DT$serum_cholesterol_mg_per_dl)
+hist(DT$oldpeak_eq_st_depression)
+hist(DT$age)
+hist(DT$max_heart_rate_achieved)
+```
