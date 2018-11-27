@@ -7,28 +7,129 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+library(data.table)
+library("caret")
+
+train_labels <- read.csv('train_labels.csv')
+train_values <- read.csv('train_values.csv')
+merged_train <- merge(train_labels, train_values, by = "patient_id")
+DT <- as.data.table(merged_train)
+train_dt <- DT[,2:15]
+
+train_dt$heart_disease_present <- as.factor(train_dt$heart_disease_present)
+train_dt$chest_pain_type <- as.factor(train_dt$chest_pain_type)
+train_dt$slope_of_peak_exercise_st_segment <- as.factor(train_dt$slope_of_peak_exercise_st_segment)
+train_dt$num_major_vessels <- as.factor((train_dt$num_major_vessels))
+train_dt$fasting_blood_sugar_gt_120_mg_per_dl <- as.factor(train_dt$fasting_blood_sugar_gt_120_mg_per_dl)
+train_dt$resting_ekg_results <- as.factor(train_dt$resting_ekg_results)
+train_dt$sex <- as.factor(train_dt$sex)
+train_dt$exercise_induced_angina <- as.factor(train_dt$exercise_induced_angina)
+train_dt$thal <- as.factor(train_dt$thal)
+
+sapply(train_dt, class)
 ```
 
-## R Markdown
-
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
-
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
 
 ```{r cars}
+dummies <- dummyVars(heart_disease_present ~ ., data = train_dt)
+dummy_train <- predict(dummies, newdata = train_dt)
+
+train_dt2 <- cbind(train_dt[,1], dummy_train)
 
 #load and do preprocessing
-preProcess(DT[, -8], 
+pre_proc_dt12 <- preProcess(train_dt2[, -1], 
                      method = c("center", "scale", "YeoJohnson"))
+train_dt2_trans <- predict(pre_proc_dt12, train_dt2[, -1])
+train_dt2_full <- cbind(train_dt[,1], train_dt2_trans)
+
+pre_proc_w_pca <- preProcess(train_dt2[, -1], 
+                     method = c("pca", "center", "scale", "YeoJohnson"))
+train_dt2_trans_pca <- predict(pre_proc_w_pca, train_dt2[, -1])
+train_dt2_full_pca <- cbind(train_dt[,1], train_dt2_trans_pca)
+```
+
+```{r}
+set.seed(9)
+trainIndex <- createDataPartition(train_dt2_full$heart_disease_present, p = .7, list = FALSE, times = 1)
+
+train_set <- train_dt2_full[trainIndex,]
+test_set <- train_dt2_full[-trainIndex,]
+
+
+set.seed(9)
+trainIndex2 <- createDataPartition(train_dt2_full_pca$heart_disease_present, p = .7, list = FALSE, times = 1)
+
+train_set_pca <- train_dt2_full_pca[trainIndex2,]
+test_set_pca <- train_dt2_full_pca[-trainIndex2,]
+```
+
+```{r}
+train.control <- trainControl(method = "repeatedcv", number = 10, repeats = 3, search = "grid")
+
+tune.grid <- expand.grid(eta = c(0.05, 0.075, 0.1),
+                         nrounds = c(50, 75, 100),
+                         max_depth = 6:8,
+                         min_child_weight = c(2.0, 2.25, 2.5),
+                         colsample_bytree = c(0.3, 0.4, 0.5),
+                         gamma = 0,
+                         subsample = 1
+                         )
+
+set.seed(9)
+library(doParallel)
+cl <- makePSOCKcluster(5)
+registerDoParallel(cl)
+
+caret.cv <- train(heart_disease_present ~ ., 
+                  data = train_set, 
+                  method = "xgbTree", 
+                  tuneGrid = tune.grid, 
+                  trControl = train.control
+                  )
+
+caret2.cv <- train(heart_disease_present ~ ., 
+                  data = train_set_pca, 
+                  method = "xgbTree", 
+                  tuneGrid = tune.grid, 
+                  trControl = train.control
+                  )
+
+stopCluster(cl)
+```
+
+```{r}
+preds <- predict(caret.cv, train_set)
+confusionMatrix(preds, train_set$heart_disease_present)
+  
+
+preds_pca <- predict(caret2.cv, train_set_pca)
+confusionMatrix(preds_pca, train_set_pca$heart_disease_present)
 
 ```
 
-## Including Plots
+```{r}
+test_dt <- as.data.table(read.csv("test_values.csv"))
+test_dt$chest_pain_type <- as.factor(test_dt$chest_pain_type)
+test_dt$slope_of_peak_exercise_st_segment <- as.factor(test_dt$slope_of_peak_exercise_st_segment)
+test_dt$num_major_vessels <- as.factor((test_dt$num_major_vessels))
+test_dt$fasting_blood_sugar_gt_120_mg_per_dl <- as.factor(test_dt$fasting_blood_sugar_gt_120_mg_per_dl)
+test_dt$resting_ekg_results <- as.factor(test_dt$resting_ekg_results)
+test_dt$sex <- as.factor(test_dt$sex)
+test_dt$exercise_induced_angina <- as.factor(test_dt$exercise_induced_angina)
+test_dt$thal <- as.factor(test_dt$thal)
 
-You can also embed plots, for example:
+dummies2 <- dummyVars(~ ., data = test_dt)
+dummy_test <- predict(dummies2, newdata = test_dt)
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+pre_proc_test <- preProcess(dummy_test, 
+                     method = c("pca", "center", "scale", "YeoJohnson"))
+test_dt2 <- predict(pre_proc_test, dummy_test)
+
+preds_actual <- predict(caret2.cv, test_dt2, type="prob")
+test_dt[,"heart_disease_present"] <- preds_actual[,2]
+test_dt_trimmed <- test_dt[, c("patient_id", "heart_disease_present")]
+
+write.csv(format(test_dt_trimmed, nsmall=2), "heart_disease_submission_3.csv", quote = FALSE, row.names = FALSE)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
